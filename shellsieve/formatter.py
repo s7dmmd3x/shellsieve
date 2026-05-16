@@ -1,68 +1,82 @@
-"""Output formatters for shellsieve scan results."""
+"""Output formatters for scan results."""
 
 from __future__ import annotations
 
 import json
-from typing import Protocol
+from abc import ABC, abstractmethod
+from typing import List
 
-from shellsieve.scanner import ScanResult
-
-
-class Formatter(Protocol):
-    """Protocol for result formatters."""
-
-    def format(self, result: ScanResult) -> str:
-        ...
+from shellsieve.scanner import ScanResult, Match
+from shellsieve.fixer import Fix
 
 
-class TextFormatter:
-    """Human-readable plain-text formatter."""
+class Formatter(ABC):
+    """Base class for all output formatters."""
 
-    def format(self, result: ScanResult) -> str:
-        if not result.has_issues():
-            return f"{result.path}: no issues found\n"
+    @abstractmethod
+    def format(self, results: List[ScanResult]) -> str:  # noqa: A003
+        """Render *results* as a string."""
 
+
+class TextFormatter(Formatter):
+    """Human-readable plain-text output, optionally including fix suggestions."""
+
+    def __init__(self, show_fixes: bool = False) -> None:
+        self.show_fixes = show_fixes
+
+    def format(self, results: List[ScanResult]) -> str:  # noqa: A003
         lines: list[str] = []
-        for match in result.matches:
-            lines.append(
-                f"{result.path}:{match.line_number}: [{match.severity}] "
-                f"{match.pattern.id} — {match.pattern.message}\n"
-                f"  {match.line_text.rstrip()}"
-            )
-        return "\n".join(lines) + "\n"
+        for result in results:
+            if not result.has_issues():
+                lines.append(f"{result.path}: no issues found")
+                continue
+            for match in result.matches:
+                lines.append(
+                    f"{result.path}:{match.lineno}:{match.col}  "
+                    f"[{match.pattern.id}] {match.pattern.description}  "
+                    f"({match.severity.name})"
+                )
+                if self.show_fixes:
+                    from shellsieve.fixer import suggest_fix
+
+                    fix = suggest_fix(match, match.snippet)
+                    if fix is not None:
+                        lines.append(str(fix))
+        return "\n".join(lines)
 
 
-class JSONFormatter:
-    """Machine-readable JSON formatter."""
+class JSONFormatter(Formatter):
+    """Machine-readable JSON output."""
 
-    def format(self, result: ScanResult) -> str:
-        payload = {
-            "path": str(result.path),
-            "issue_count": len(result.matches),
-            "issues": [
+    def format(self, results: List[ScanResult]) -> str:  # noqa: A003
+        payload = []
+        for result in results:
+            payload.append(
                 {
-                    "line": match.line_number,
-                    "severity": match.severity,
-                    "id": match.pattern.id,
-                    "message": match.pattern.message,
-                    "text": match.line_text.rstrip(),
+                    "path": str(result.path),
+                    "issues": [
+                        {
+                            "id": m.pattern.id,
+                            "description": m.pattern.description,
+                            "severity": m.severity.name,
+                            "line": m.lineno,
+                            "col": m.col,
+                            "snippet": m.snippet,
+                        }
+                        for m in result.matches
+                    ],
                 }
-                for match in result.matches
-            ],
-        }
+            )
         return json.dumps(payload, indent=2)
 
 
-FORMATTERS: dict[str, Formatter] = {
-    "text": TextFormatter(),
-    "json": JSONFormatter(),
-}
-
-
-def get_formatter(name: str) -> Formatter:
-    """Return a formatter by name, defaulting to text."""
-    if name not in FORMATTERS:
-        raise ValueError(
-            f"Unknown formatter {name!r}. Choices: {list(FORMATTERS)}"
-        )
-    return FORMATTERS[name]
+def get_formatter(name: str, **kwargs) -> Formatter:
+    """Return a :class:`Formatter` by *name* (``'text'`` or ``'json'``)."""
+    formatters: dict[str, type[Formatter]] = {
+        "text": TextFormatter,
+        "json": JSONFormatter,
+    }
+    cls = formatters.get(name.lower())
+    if cls is None:
+        raise ValueError(f"Unknown formatter {name!r}. Choose from: {list(formatters)}.")
+    return cls(**kwargs)

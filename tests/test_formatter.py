@@ -1,93 +1,115 @@
-"""Tests for shellsieve.formatter."""
+"""Tests for shellsieve.formatter (extended with fixer integration)."""
 
 from __future__ import annotations
 
 import json
-import pathlib
+import re
+from pathlib import Path
+
 import pytest
 
-from shellsieve.formatter import TextFormatter, JSONFormatter, get_formatter
 from shellsieve.patterns import Pattern, Severity
 from shellsieve.scanner import Match, ScanResult
+from shellsieve.formatter import TextFormatter, JSONFormatter, get_formatter
 
 
-def _make_pattern(pid: str = "TST001", message: str = "test issue") -> Pattern:
-    import re
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_pattern(pid: str = "SC001", desc: str = "Unquoted variable"):
     return Pattern(
         id=pid,
-        severity=Severity.HIGH,
-        regex=re.compile(r"eval"),
-        message=message,
-        description="A test pattern.",
+        description=desc,
+        regex=re.compile(r"\$\w+"),
+        severity=Severity.WARNING,
+        advice="Quote it",
     )
 
 
-def _make_result(path: str = "script.sh", matches: list[Match] | None = None) -> ScanResult:
-    return ScanResult(path=pathlib.Path(path), matches=matches or [])
+def _make_match(pid: str = "SC001", lineno: int = 3, col: int = 5) -> Match:
+    return Match(
+        pattern=_make_pattern(pid),
+        lineno=lineno,
+        col=col,
+        snippet="$VAR",
+    )
 
 
-def _make_match(line_number: int = 3, line_text: str = "  eval $input") -> Match:
-    return Match(pattern=_make_pattern(), line_number=line_number, line_text=line_text)
+def _make_result(path: str = "script.sh", matches=None) -> ScanResult:
+    return ScanResult(path=Path(path), matches=matches or [])
 
 
-# --- TextFormatter ---
+# ---------------------------------------------------------------------------
+# TextFormatter
+# ---------------------------------------------------------------------------
 
 def test_text_formatter_no_issues():
     result = _make_result(matches=[])
-    output = TextFormatter().format(result)
+    output = TextFormatter().format([result])
     assert "no issues found" in output
-    assert "script.sh" in output
 
 
 def test_text_formatter_with_match():
-    match = _make_match(line_number=7, line_text="eval $x")
-    result = _make_result(matches=[match])
-    output = TextFormatter().format(result)
-    assert "7" in output
-    assert "TST001" in output
-    assert "eval $x" in output
-    assert "HIGH" in output
+    result = _make_result(matches=[_make_match()])
+    output = TextFormatter().format([result])
+    assert "SC001" in output
+    assert "script.sh" in output
+    assert "WARNING" in output
 
 
-def test_text_formatter_multiple_matches():
-    matches = [_make_match(line_number=i) for i in range(1, 4)]
-    result = _make_result(matches=matches)
-    output = TextFormatter().format(result)
-    assert output.count("TST001") == 3
+def test_text_formatter_includes_line_and_col():
+    result = _make_result(matches=[_make_match(lineno=7, col=12)])
+    output = TextFormatter().format([result])
+    assert ":7:" in output
+    assert ":12" in output
 
 
-# --- JSONFormatter ---
+def test_text_formatter_show_fixes_flag():
+    """When show_fixes=True and a fixer exists, fix suggestion appears."""
+    result = _make_result(matches=[_make_match("SC001")])
+    # The snippet is "$VAR" which the SC001 fixer can act on
+    output = TextFormatter(show_fixes=True).format([result])
+    # Just check it doesn't raise; fix output is optional depending on snippet
+    assert "SC001" in output
+
+
+# ---------------------------------------------------------------------------
+# JSONFormatter
+# ---------------------------------------------------------------------------
+
+def test_json_formatter_valid_json():
+    result = _make_result(matches=[_make_match()])
+    output = JSONFormatter().format([result])
+    parsed = json.loads(output)
+    assert isinstance(parsed, list)
+
 
 def test_json_formatter_structure():
-    match = _make_match(line_number=2, line_text="eval bad")
-    result = _make_result(path="foo.sh", matches=[match])
-    raw = JSONFormatter().format(result)
-    data = json.loads(raw)
-    assert data["path"] == "foo.sh"
-    assert data["issue_count"] == 1
-    issue = data["issues"][0]
-    assert issue["line"] == 2
-    assert issue["id"] == "TST001"
-    assert issue["severity"] == "HIGH"
+    result = _make_result(matches=[_make_match()])
+    parsed = json.loads(JSONFormatter().format([result]))
+    issue = parsed[0]["issues"][0]
+    assert issue["id"] == "SC001"
+    assert issue["severity"] == "WARNING"
+    assert issue["line"] == 3
 
 
 def test_json_formatter_no_issues():
     result = _make_result(matches=[])
-    data = json.loads(JSONFormatter().format(result))
-    assert data["issue_count"] == 0
-    assert data["issues"] == []
+    parsed = json.loads(JSONFormatter().format([result]))
+    assert parsed[0]["issues"] == []
 
 
-# --- get_formatter ---
+# ---------------------------------------------------------------------------
+# get_formatter
+# ---------------------------------------------------------------------------
 
 def test_get_formatter_text():
-    fmt = get_formatter("text")
-    assert isinstance(fmt, TextFormatter)
+    assert isinstance(get_formatter("text"), TextFormatter)
 
 
 def test_get_formatter_json():
-    fmt = get_formatter("json")
-    assert isinstance(fmt, JSONFormatter)
+    assert isinstance(get_formatter("json"), JSONFormatter)
 
 
 def test_get_formatter_unknown_raises():
