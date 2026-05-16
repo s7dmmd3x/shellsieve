@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List
+from typing import List, Optional
 
 
 class Severity(str, Enum):
@@ -74,6 +74,30 @@ UNSAFE_PATTERNS: List[Pattern] = [
 ]
 
 
-def get_pattern_by_id(pattern_id: str) -> Pattern | None:
+def get_pattern_by_id(pattern_id: str) -> Optional[Pattern]:
     """Return a pattern by its ID, or None if not found."""
     return next((p for p in UNSAFE_PATTERNS if p.id == pattern_id), None)
+
+
+def get_patterns_by_tag(tag: str) -> List[Pattern]:
+    """Return all patterns that include the given tag.
+
+    Args:
+        tag: The tag string to filter patterns by (e.g. "injection", "destructive").
+
+    Returns:
+        A list of Pattern instances whose tags include the specified tag.
+    """
+    return [p for p in UNSAFE_PATTERNS if tag in p.tags]
+
+
+def get_patterns_by_severity(severity: Severity) -> List[Pattern]:
+    """Return all patterns matching the given severity level.
+
+    Args:
+        severity: A Severity enum value to filter patterns by.
+
+    Returns:
+        A list of Pattern instances with the specified severity.
+    """
+    return [p for p in UNSAFE_PATTERNS if p.severity == severity]
