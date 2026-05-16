@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-from typing import List
-
 import argparse
+import sys
+import pathlib
 
-from shellsieve.patterns import Severity, PATTERNS
-from shellsieve.reporter import print_results
-from shellsieve.scanner import scan_file, ScanResult
+from shellsieve.config import load_config
+from shellsieve.formatter import get_formatter
+from shellsieve.scanner import scan_file
+from shellsieve.suppression import filter_suppressed
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -22,52 +21,68 @@ def _build_parser() -> argparse.ArgumentParser:
         "files",
         nargs="+",
         metavar="FILE",
-        help="Shell script file(s) to analyze.",
+        help="Shell script(s) to analyze.",
     )
     parser.add_argument(
-        "--min-severity",
-        choices=[s.name.lower() for s in Severity],
-        default="low",
-        help="Minimum severity level to report (default: low).",
-    )
-    parser.add_argument(
-        "--no-colour",
-        action="store_true",
-        help="Disable ANSI colour output.",
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        dest="format",
+        help="Output format (default: text).",
     )
     parser.add_argument(
         "--exit-zero",
         action="store_true",
+        default=False,
         help="Always exit with code 0, even when issues are found.",
+    )
+    parser.add_argument(
+        "--severity",
+        choices=["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+        default=None,
+        help="Minimum severity level to report.",
     )
     return parser
 
 
-def run(argv: List[str] | None = None) -> int:
+def run(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    min_sev = Severity[args.min_severity.upper()]
-    active_patterns = [p for p in PATTERNS if p.severity.value >= min_sev.value]
+    config = load_config()
+    formatter = get_formatter(args.format)
+    found_issues = False
 
-    results: List[ScanResult] = []
-    for raw_path in args.files:
-        path = Path(raw_path)
+    for file_arg in args.files:
+        path = pathlib.Path(file_arg)
         if not path.exists():
-            print(f"shellsieve: {raw_path}: file not found", file=sys.stderr)
+            print(f"shellsieve: {file_arg}: file not found", file=sys.stderr)
             continue
-        results.append(scan_file(path, patterns=active_patterns))
 
-    print_results(results, use_colour=not args.no_colour)
+        result = scan_file(path)
+        result = filter_suppressed(result)
 
-    if args.exit_zero:
-        return 0
-    return 1 if any(r.has_issues for r in results) else 0
+        if args.severity:
+            from shellsieve.patterns import Severity
+            min_sev = Severity[args.severity]
+            result.matches = [
+                m for m in result.matches
+                if Severity[m.severity] >= min_sev
+            ]
+
+        print(formatter.format(result), end="")
+
+        if result.has_issues():
+            found_issues = True
+
+    if found_issues and not args.exit_zero:
+        return 1
+    return 0
 
 
-def main() -> None:  # pragma: no cover
+def main() -> None:
     sys.exit(run())
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
