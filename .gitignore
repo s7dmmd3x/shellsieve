@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+.ruff_cache/
+.DS_Store
+*.log
+*.swo
+.Python
+*.egg
+develop-eggs/
+.tox/
+.vscode/
+htmlcov/
+.venv/
+.coverage
