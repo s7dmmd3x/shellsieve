@@ -100,6 +100,16 @@ def test_suggest_fixes_for_lines_skips_unknown_patterns():
 def test_suggest_fixes_for_lines_handles_out_of_range_lineno():
     m = _make_match("SC001", lineno=99)
     lines = ["echo $USER\n"]
-    # Should not raise; line will be empty string → no regex match → no fix
+    # Line 99 does not exist; should not raise, just return no fixes
     fixes = suggest_fixes_for_lines({99: [m]}, lines)
     assert fixes == []
+
+
+def test_suggest_fixes_for_lines_multiple_matches_same_line():
+    """Multiple matches on the same line should each produce a fix attempt."""
+    m1 = _make_match("SC001", lineno=1)
+    m2 = _make_match("SC001", lineno=1)
+    lines = ["echo $USER $HOME\n"]
+    fixes = suggest_fixes_for_lines({1: [m1, m2]}, lines)
+    # Both matches are for the same known pattern on the same valid line
+    assert len(fixes) == 2
