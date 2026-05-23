@@ -42,6 +42,16 @@ class AnnotatedFile:
     def issue_lines(self) -> List[AnnotatedLine]:
         return [ln for ln in self.lines if ln.has_issues]
 
+    def context_lines(self, lineno: int, context: int = 2) -> List[AnnotatedLine]:
+        """Return lines surrounding *lineno* (1-based) with *context* lines on each side.
+
+        Useful for rendering a snippet around a flagged line without
+        exposing the full file contents to the caller.
+        """
+        start = max(0, lineno - 1 - context)
+        end = min(len(self.lines), lineno - 1 + context + 1)
+        return self.lines[start:end]
+
 
 def annotate_result(result: ScanResult) -> AnnotatedFile:
     """Build an :class:`AnnotatedFile` from a :class:`ScanResult`.
